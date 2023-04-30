@@ -14,9 +14,13 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
-use crate::config::MAX_APP_NUM;
+use core::mem::MaybeUninit;
+
+use crate::config::{MAX_APP_NUM, MAX_SYSCALL_NUM};
 use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
+use crate::timer::get_time_ms;
+use alloc::collections::BTreeMap;
 use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
@@ -51,10 +55,18 @@ lazy_static! {
     /// Global variable: TASK_MANAGER
     pub static ref TASK_MANAGER: TaskManager = {
         let num_app = get_num_app();
-        let mut tasks = [TaskControlBlock {
-            task_cx: TaskContext::zero_init(),
-            task_status: TaskStatus::UnInit,
-        }; MAX_APP_NUM];
+        let mut tasks = {
+            let mut tasks : [MaybeUninit<TaskControlBlock>; MAX_APP_NUM] = unsafe {
+                MaybeUninit::uninit().assume_init()
+            };
+            for i in 0..MAX_APP_NUM {
+                tasks[i] = MaybeUninit::new(TaskControlBlock {task_cx: TaskContext::zero_init(),
+                task_status: TaskStatus::UnInit,
+                syscall_count: BTreeMap::new(),
+                start_time: 0,})
+            };
+            unsafe {core::mem::transmute::<_, [TaskControlBlock; MAX_APP_NUM]>(tasks)}
+        };
         for (i, task) in tasks.iter_mut().enumerate() {
             task.task_cx = TaskContext::goto_restore(init_app_cx(i));
             task.task_status = TaskStatus::Ready;
@@ -81,6 +93,7 @@ impl TaskManager {
         let task0 = &mut inner.tasks[0];
         task0.task_status = TaskStatus::Running;
         let next_task_cx_ptr = &task0.task_cx as *const TaskContext;
+        task0.start_time = get_time_ms();
         drop(inner);
         let mut _unused = TaskContext::zero_init();
         // before this, we should drop local variables that must be dropped manually
@@ -125,6 +138,9 @@ impl TaskManager {
             inner.current_task = next;
             let current_task_cx_ptr = &mut inner.tasks[current].task_cx as *mut TaskContext;
             let next_task_cx_ptr = &inner.tasks[next].task_cx as *const TaskContext;
+            if inner.tasks[next].start_time == 0 {
+                inner.tasks[next].start_time = get_time_ms();
+            }
             drop(inner);
             // before this, we should drop local variables that must be dropped manually
             unsafe {
@@ -134,6 +150,36 @@ impl TaskManager {
         } else {
             panic!("All applications completed!");
         }
+    }
+    /// Get the status of current task
+    fn get_current_status(&self) -> TaskStatus {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].task_status
+    }
+    /// Record syscall(count)
+    fn record_syscall(&self, call_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_count.entry(call_id).and_modify(| call_times | *call_times += 1).or_insert(1);
+    }
+
+    /// Write syscall times to an array
+    fn write_syscall_times_array(&self, syscall_times: &mut [u32; MAX_SYSCALL_NUM]) {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        for syscall_id in 0..MAX_SYSCALL_NUM {
+            match inner.tasks[current].syscall_count.get(&syscall_id) {
+                Some(syscall_time) => syscall_times[syscall_id] = *syscall_time as u32,
+                None => syscall_times[syscall_id] = 0,
+            };
+        }
+        
+    }
+    fn get_start_running_time(&self) -> usize {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].start_time
     }
 }
 
@@ -168,4 +214,24 @@ pub fn suspend_current_and_run_next() {
 pub fn exit_current_and_run_next() {
     mark_current_exited();
     run_next_task();
+}
+
+/// Get current status
+pub fn get_current_status() -> TaskStatus {
+    TASK_MANAGER.get_current_status()
+}
+
+/// Record syscall
+pub fn record_syscall(id: usize) {
+    TASK_MANAGER.record_syscall(id);
+}
+
+/// Write syscall times to an array
+pub fn write_syscall_times_array(syscall_times: &mut [u32; MAX_SYSCALL_NUM]) {
+    TASK_MANAGER.write_syscall_times_array(syscall_times);
+}
+
+/// Get start running time
+pub fn get_start_running_time() -> usize {
+    TASK_MANAGER.get_start_running_time()
 }
