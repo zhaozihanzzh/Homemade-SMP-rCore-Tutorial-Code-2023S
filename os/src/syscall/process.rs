@@ -5,7 +5,7 @@ use crate::{
         change_program_brk, exit_current_and_run_next, suspend_current_and_run_next, TaskStatus, get_current_status, get_start_running_time, write_syscall_times_array, current_user_token, task_mmap, task_munmap,
     },
     mm::{translated_byte_buffer, VirtAddr},
-    timer::{get_time_ms, get_time_us}
+    timer::get_time_ms
 };
 
 #[repr(C)]
@@ -45,8 +45,9 @@ pub fn sys_yield() -> isize {
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
     trace!("kernel: sys_get_time");
-    let us = get_time_us();
-    let tmp_timeval = TimeVal{sec: us / 1_000_000, usec: us % 1_000_000};
+    let ms = get_time_ms(); // get_time_us causes precision loss
+    // See https://github.com/LearningOS/rCore-Tutorial-Code-2022S/pull/4
+    let tmp_timeval = TimeVal{sec: ms / 1_000, usec: (ms * 1_000) % 1_000_000};
     let mut remain_len = core::mem::size_of::<TimeVal>();
     let buffers = translated_byte_buffer(current_user_token(), _ts as *const u8, remain_len);
     let mut tmp_timeval_ptr = &tmp_timeval as *const TimeVal as *const u8;
@@ -95,7 +96,6 @@ pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
             }
         // }
     }
-    println!("DEBUG: Time comsumption in copying: {}", get_time_ms() - current_time);
     /*println!("remain:{}\n__________DEBUG___________", remain_len);
     unsafe {tmp_taskinfo_ptr = tmp_taskinfo_ptr.sub(core::mem::size_of::<TaskInfo>());}
 
@@ -118,7 +118,7 @@ pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
 
 // YOUR JOB: Implement mmap.
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
-    trace!("kernel: sys_mmap!");
+    trace!("kernel: sys_mmap");
     if VirtAddr::from(_start).aligned() && (_port & (!0x7usize) == 0) && (_port & 0x7usize != 0) {
         let ret = task_mmap(VirtAddr(_start), _len, _port);
         println!("DEBUG: sys_mmap returns {}, _start={}", ret, _start);
@@ -130,7 +130,7 @@ pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
 
 // YOUR JOB: Implement munmap.
 pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    trace!("kernel: sys_munmap!");
+    trace!("kernel: sys_munmap");
     if VirtAddr::from(_start).aligned() {
         let ret = task_munmap(VirtAddr(_start), _len);
         println!("DEBUG: sys_munmap returns {}, _start={}", ret, _start);

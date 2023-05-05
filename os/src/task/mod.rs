@@ -159,11 +159,8 @@ impl TaskManager {
             if inner.tasks[next].start_time == 0 {
                 if inner.tasks[next].is_started {
                     println!("ERROR: HAS STARTED!!!!!!!!!!!!!!!!!!!");
-                } else {
-                    println!("HASN'T STARTED!!!!!!!!!!!!!!!!!!!");
                 }
                 inner.tasks[next].start_time = get_time_ms();
-                println!("Start_time in run_next_task={}", inner.tasks[next].start_time);
                 inner.tasks[next].is_started = true;
             } else if !inner.tasks[next].is_started {
                 println!("ERROR: WRONG START TIME!");
