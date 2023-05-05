@@ -1,11 +1,15 @@
 use crate::{
-    config::MAX_SYSCALL_NUM,
+    config::{MAX_SYSCALL_NUM, PAGE_SIZE},
     fs::{open_file, OpenFlags},
-    mm::{translated_ref, translated_refmut, translated_str},
+    mm::{translated_ref, translated_refmut, translated_str, translated_byte_buffer, VirtAddr, MapPermission},
     task::{
-        current_process, current_task, current_user_token, exit_current_and_run_next, pid2process,
-        suspend_current_and_run_next, SignalFlags, TaskStatus,
+        current_process, current_task, current_user_token,
+        exit_current_and_run_next, pid2process, suspend_current_and_run_next,
+        TaskStatus, SignalFlags,
+        write_current_syscall_times_array, get_current_start_running_time,
     },
+    
+    timer::{get_time_ms, get_time_us}
 };
 use alloc::{string::String, sync::Arc, vec::Vec};
 
@@ -164,23 +168,81 @@ pub fn sys_kill(pid: usize, signal: u32) -> isize {
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
     trace!(
-        "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_get_time",
         current_task().unwrap().process.upgrade().unwrap().getpid()
     );
-    -1
+    let us = get_time_us();
+    let tmp_timeval = TimeVal{sec: us / 1_000_000, usec: us % 1_000_000};
+    let mut remain_len = core::mem::size_of::<TimeVal>();
+    let buffers = translated_byte_buffer(current_user_token(), _ts as *const u8, remain_len);
+    let mut tmp_timeval_ptr = &tmp_timeval as *const TimeVal as *const u8;
+    for buffer in buffers {
+        // if buffer.len() <= remain_len {
+            for byte in buffer {
+                unsafe {
+                    *byte = *tmp_timeval_ptr;
+                    tmp_timeval_ptr = tmp_timeval_ptr.add(1);
+                }
+                remain_len -= 1;
+            }
+        // }
+    }
+    if remain_len == 0 {
+        0
+    } else {
+        -1
+    }
 }
-
-/// task_info syscall
-///
 /// YOUR JOB: Finish sys_task_info to pass testcases
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TaskInfo`] is splitted by two pages ?
 pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
     trace!(
-        "kernel:pid[{}] sys_task_info NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_task_info",
         current_task().unwrap().process.upgrade().unwrap().getpid()
     );
-    -1
+    let start_running_time = get_current_start_running_time();
+    let mut remain_len = core::mem::size_of::<TaskInfo>();
+    println!("Sizeof TaskInfo: {}", remain_len);
+    let buffers = translated_byte_buffer(current_user_token(), _ti as *const u8, remain_len);
+    let mut tmp_taskinfo = TaskInfo{status: current_task().unwrap().inner_exclusive_access().task_status, syscall_times: [0; MAX_SYSCALL_NUM], time: 0};
+    write_current_syscall_times_array(&mut tmp_taskinfo.syscall_times);
+    let mut tmp_taskinfo_ptr = &tmp_taskinfo as *const TaskInfo as *const u8;
+    let current_time = get_time_ms();
+    tmp_taskinfo.time = current_time - start_running_time;
+    println!("DEBUG: sys_task_info: info.isRunning{}, info.time{}, current_time{}, start_running_time{}", tmp_taskinfo.status==TaskStatus::Running, tmp_taskinfo.time, current_time, start_running_time);
+    for buffer in buffers {
+        // if buffer.len() <= remain_len {
+        //print!("Buffer-----DEBUG------");
+            for byte in buffer {
+                unsafe {
+                    *byte = *tmp_taskinfo_ptr;
+                    //print!("{}", *byte);
+                    tmp_taskinfo_ptr = tmp_taskinfo_ptr.add(1);
+                }
+                remain_len -= 1;
+            }
+        // }
+    }
+    println!("DEBUG: Time comsumption in copying: {}", get_time_ms() - current_time);
+    /*println!("remain:{}\n__________DEBUG___________", remain_len);
+    unsafe {tmp_taskinfo_ptr = tmp_taskinfo_ptr.sub(core::mem::size_of::<TaskInfo>());}
+
+    for idx in 0..core::mem::size_of::<TaskInfo>() {
+        unsafe {
+            print!("{}", *tmp_taskinfo_ptr.add(idx));
+        }
+    }*/
+    // unsafe {
+    //     (*converted).status = get_current_status();
+    //     write_syscall_times_array(&mut (*converted).syscall_times);
+    //     (*converted).time = get_time_ms() - get_start_running_time();
+    // }
+    if remain_len == 0 {
+        0
+    } else {
+        -1
+    }
 }
 
 /// mmap syscall
@@ -188,20 +250,79 @@ pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
 /// YOUR JOB: Implement mmap.
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
     trace!(
-        "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_mmap",
         current_task().unwrap().process.upgrade().unwrap().getpid()
     );
+    if VirtAddr::from(_start).aligned() && (_port & (!0x7usize) == 0) && (_port & 0x7usize != 0) {
+        let current = current_task().unwrap().process.upgrade().unwrap();
+        let mut inner = current.inner_exclusive_access();
+        let mut perm = MapPermission::U;
+        if _port & 0x1 != 0 {
+            perm |= MapPermission::R;
+        }
+        if _port & 0x2 != 0 {
+            perm |= MapPermission::W;
+        }
+        if _port & 0x4 != 0 {
+            perm |= MapPermission::X;
+        }
+        let mut current_addr: usize = _start;
+        while current_addr < _start + _len {
+            match inner.memory_set.translate(VirtAddr(current_addr).floor()) {
+                Some(pte) => {
+                    if pte.is_valid() {
+                        println!("DEBUG: PTE found in PageTable: {}", pte.bits);
+                        return -1;
+                    }
+                },
+                None => {
+                }
+            }
+            current_addr += PAGE_SIZE;
+        }
+
+        inner.memory_set.insert_framed_area(VirtAddr::from(_start).floor().into(), VirtAddr(_start + _len).ceil().into(), perm);
+    
+        println!("DEBUG: sys_mmap returns 0, _start={}", _start);
+        return 0;
+    }
+    println!("DEBUG: sys_mmap returns -1, _start={}", _start);
     -1
 }
 
-/// munmap syscall
-///
+
 /// YOUR JOB: Implement munmap.
 pub fn sys_munmap(_start: usize, _len: usize) -> isize {
     trace!(
-        "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_munmap",
         current_task().unwrap().process.upgrade().unwrap().getpid()
     );
+    if VirtAddr::from(_start).aligned() {
+        let current = current_task().unwrap().process.upgrade().unwrap();
+        let mut inner = current.inner_exclusive_access();
+        // Verify whether [start, start+len) has been mapped. If not, return -1
+        let mut current_addr: usize = _start;
+        while VirtAddr(current_addr).floor() < VirtAddr(_start + _len).ceil() {
+            // test if there is a PTE corresponding to current_addr
+            match inner.memory_set.translate(VirtAddr(current_addr).floor()) {
+                Some(pte) => {
+                    if !pte.is_valid() {
+                        println!("DEBUG: munmap: PTE invalid in PageTable: {}", pte.bits);
+                        return -1;
+                    }
+                },
+                None => {
+                    println!("DEBUG: munmap: no PTE in PageTable");
+                    return -1;
+                }
+            }
+            current_addr += PAGE_SIZE;
+        }
+        inner.memory_set.remove_area_with_start_vpn(VirtAddr::from(_start).floor());
+        println!("DEBUG: sys_munmap returns 0, _start={}", _start);
+        return 0;
+    }
+    println!("DEBUG: sys_munmap returns -1, _start={}", _start);
     -1
 }
 
