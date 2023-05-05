@@ -5,6 +5,7 @@ use crate::config::TRAP_CONTEXT_BASE;
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
+use alloc::collections::BTreeMap;
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::cell::RefMut;
@@ -68,6 +69,15 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// The task syscall counts
+    pub syscall_count: BTreeMap<usize, usize>,
+
+    /// Start running time
+    pub start_time: usize,
+
+    /// debug: is run
+    pub is_started: bool,
 }
 
 impl TaskControlBlockInner {
@@ -118,6 +128,9 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    syscall_count: BTreeMap::new(),
+                    start_time: 0,
+                    is_started: false,
                 })
             },
         };
@@ -191,6 +204,9 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    syscall_count: BTreeMap::new(),
+                    start_time: 0,
+                    is_started: false,
                 })
             },
         });
