@@ -14,15 +14,14 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
-use core::mem::MaybeUninit;
 
-use crate::config::{MAX_APP_NUM, MAX_SYSCALL_NUM};
-use crate::loader::{get_app_data, get_num_app, init_app_cx};
+use crate::config::{MAX_SYSCALL_NUM, PAGE_SIZE};
+use crate::loader::{get_app_data, get_num_app};
+use crate::mm::{MapPermission, VirtAddr};
 use crate::sync::UPSafeCell;
 use crate::timer::get_time_ms;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
-use alloc::collections::BTreeMap;
 
 use lazy_static::*;
 use switch::__switch;
@@ -86,7 +85,14 @@ impl TaskManager {
         let next_task = &mut inner.tasks[0];
         next_task.task_status = TaskStatus::Running;
         let next_task_cx_ptr = &next_task.task_cx as *const TaskContext;
-        next_task_cx_ptr.start_time = get_time_ms();
+        if next_task.is_started {
+            println!("ERROR: HAS STARTED!!!!!!!!!!!!!!!!!!!");
+        }
+        next_task.start_time = get_time_ms(); 
+        if next_task.start_time == 0 {
+            println!("ERROR: start_time is still 0 after assignment!");
+        }
+        next_task.is_started = true;
         drop(inner);
         let mut _unused = TaskContext::zero_init();
         // before this, we should drop local variables that must be dropped manually
@@ -151,8 +157,17 @@ impl TaskManager {
             let current_task_cx_ptr = &mut inner.tasks[current].task_cx as *mut TaskContext;
             let next_task_cx_ptr = &inner.tasks[next].task_cx as *const TaskContext;
             if inner.tasks[next].start_time == 0 {
+                if inner.tasks[next].is_started {
+                    println!("ERROR: HAS STARTED!!!!!!!!!!!!!!!!!!!");
+                } else {
+                    println!("HASN'T STARTED!!!!!!!!!!!!!!!!!!!");
+                }
                 inner.tasks[next].start_time = get_time_ms();
-            }
+                println!("Start_time in run_next_task={}", inner.tasks[next].start_time);
+                inner.tasks[next].is_started = true;
+            } else if !inner.tasks[next].is_started {
+                println!("ERROR: WRONG START TIME!");
+            } 
             drop(inner);
             // before this, we should drop local variables that must be dropped manually
             unsafe {
@@ -188,10 +203,72 @@ impl TaskManager {
         }
         
     }
+
+    /// Get start running time
     fn get_start_running_time(&self) -> usize {
         let inner = self.inner.exclusive_access();
         let current = inner.current_task;
+        println!("DEBUG: start_time={}", inner.tasks[current].start_time);
         inner.tasks[current].start_time
+    }
+
+    /// Map Memory
+    fn mmap(&self, start: VirtAddr, len: usize, port: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        let mut perm = MapPermission::U;
+        if port & 0x1 != 0 {
+            perm |= MapPermission::R;
+        }
+        if port & 0x2 != 0 {
+            perm |= MapPermission::W;
+        }
+        if port & 0x4 != 0 {
+            perm |= MapPermission::X;
+        }
+        let mut current_addr: usize = start.into();
+        while current_addr < usize::from(start) + len {
+            match inner.tasks[current].memory_set.translate(VirtAddr(current_addr).floor()) {
+                Some(pte) => {
+                    if pte.is_valid() {
+                        println!("DEBUG: PTE found in PageTable: {}", pte.bits);
+                        return -1;
+                    }
+                },
+                None => {
+                }
+            }
+            current_addr += PAGE_SIZE;
+        }
+
+        inner.tasks[current].memory_set.insert_framed_area(start.floor().into(), VirtAddr(usize::from(start) + len).ceil().into(), perm);
+        0
+    }
+
+    /// Ummap Memory
+    fn munmap(&self, start: VirtAddr, len: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        // Verify whether [start, start+len) has been mapped. If not, return -1
+        let mut current_addr: usize = start.into();
+        while VirtAddr(current_addr).floor() < VirtAddr(usize::from(start) + len).ceil() {
+            // test if there is a PTE corresponding to current_addr
+            match inner.tasks[current].memory_set.translate(VirtAddr(current_addr).floor()) {
+                Some(pte) => {
+                    if !pte.is_valid() {
+                        println!("DEBUG: munmap: PTE invalid in PageTable: {}", pte.bits);
+                        return -1;
+                    }
+                },
+                None => {
+                    println!("DEBUG: munmap: no PTE in PageTable");
+                    return -1;
+                }
+            }
+            current_addr += PAGE_SIZE;
+        }
+        inner.tasks[current].memory_set.remove_framed_area(VirtAddr::from(start), VirtAddr::from(usize::from(start) + len));
+        0
     }
 }
 
@@ -261,4 +338,14 @@ pub fn write_syscall_times_array(syscall_times: &mut [u32; MAX_SYSCALL_NUM]) {
 /// Get start running time
 pub fn get_start_running_time() -> usize {
     TASK_MANAGER.get_start_running_time()
+}
+
+/// mmap
+pub fn task_mmap(start: VirtAddr, len: usize, port: usize) -> isize {
+    TASK_MANAGER.mmap(start, len, port)
+}
+
+/// munmap
+pub fn task_munmap(start: VirtAddr, len: usize) -> isize {
+    TASK_MANAGER.munmap(start, len)
 }

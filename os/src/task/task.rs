@@ -36,6 +36,9 @@ pub struct TaskControlBlock {
 
     /// Start running time
     pub start_time: usize,
+
+    /// debug: is run
+    pub is_started: bool,
 }
 
 impl TaskControlBlock {
@@ -73,6 +76,7 @@ impl TaskControlBlock {
             program_brk: user_sp,
             syscall_count: BTreeMap::new(),
             start_time: 0,
+            is_started: false,
         };
         // prepare TrapContext in user space
         let trap_cx = task_control_block.get_trap_cx();
