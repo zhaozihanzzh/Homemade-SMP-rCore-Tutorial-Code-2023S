@@ -11,8 +11,7 @@ use crate::{
         write_current_syscall_times_array,
         get_current_start_running_time, 
     },
-    
-    timer::{get_time_ms, get_time_us}
+    timer::get_time_ms
 };
 
 #[repr(C)]
@@ -126,8 +125,8 @@ pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
         "kernel:pid[{}] sys_get_time",
         current_task().unwrap().pid.0
     );
-    let us = get_time_us();
-    let tmp_timeval = TimeVal{sec: us / 1_000_000, usec: us % 1_000_000};
+    let ms = get_time_ms();
+    let tmp_timeval = TimeVal{sec: ms / 1_000, usec: (ms * 1_000) % 1_000_000};
     let mut remain_len = core::mem::size_of::<TimeVal>();
     let buffers = translated_byte_buffer(current_user_token(), _ts as *const u8, remain_len);
     let mut tmp_timeval_ptr = &tmp_timeval as *const TimeVal as *const u8;
@@ -179,7 +178,6 @@ pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
             }
         // }
     }
-    println!("DEBUG: Time comsumption in copying: {}", get_time_ms() - current_time);
     /*println!("remain:{}\n__________DEBUG___________", remain_len);
     unsafe {tmp_taskinfo_ptr = tmp_taskinfo_ptr.sub(core::mem::size_of::<TaskInfo>());}
 
