@@ -66,6 +66,7 @@ pub fn run_tasks() {
                 println!("Start_time in run_next_task={}", task_inner.start_time);
                 task_inner.is_started = true;
             }
+            task_inner.stride += 32768 / task_inner.priority;
             let next_task_cx_ptr = &task_inner.task_cx as *const TaskContext;
             task_inner.task_status = TaskStatus::Running;
             // release coming task_inner manually

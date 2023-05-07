@@ -9,7 +9,7 @@ use crate::{
         add_task, current_task, current_user_token, exit_current_and_run_next,
         suspend_current_and_run_next, TaskStatus,
         write_current_syscall_times_array,
-        get_current_start_running_time, 
+        get_current_start_running_time, TaskControlBlock, 
     },
     timer::get_time_ms
 };
@@ -291,17 +291,36 @@ pub fn sys_sbrk(size: i32) -> isize {
 /// HINT: fork + exec =/= spawn
 pub fn sys_spawn(_path: *const u8) -> isize {
     trace!(
-        "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_spawn",
         current_task().unwrap().pid.0
     );
-    -1
+    let token = current_user_token();
+    // Copy name from user memory
+    let path = translated_str(token, _path);
+    println!("[debug] sys_spawn: {}", path);
+    if let Some(data) = get_app_data_by_name(path.as_str()) {
+        let new_block_ptr = Arc::new(TaskControlBlock::new(data));
+        new_block_ptr.inner_exclusive_access().parent = Some(Arc::downgrade(&current_task().unwrap()));
+        let pid: isize = new_block_ptr.pid.0 as isize;
+        current_task().unwrap().inner_exclusive_access().children.push(new_block_ptr.clone());
+        add_task(new_block_ptr.clone());
+        return pid;
+    } else {
+        return -1;
+    }
 }
 
 // YOUR JOB: Set task priority.
 pub fn sys_set_priority(_prio: isize) -> isize {
     trace!(
-        "kernel:pid[{}] sys_set_priority NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_set_priority",
         current_task().unwrap().pid.0
     );
-    -1
+    println!("[debug] set priority = {}", _prio);
+    if _prio <= 1 {
+        -1
+    } else {
+        current_task().unwrap().inner_exclusive_access().priority = _prio as usize;
+        _prio
+    }
 }
