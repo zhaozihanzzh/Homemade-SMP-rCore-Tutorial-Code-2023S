@@ -81,6 +81,12 @@ pub struct TaskControlBlockInner {
 
     /// debug: is run
     pub is_started: bool,
+
+    /// the length of running
+    pub stride: usize,
+
+    /// priority
+    pub priority: usize,
 }
 
 impl TaskControlBlockInner {
@@ -148,6 +154,8 @@ impl TaskControlBlock {
                     syscall_count: BTreeMap::new(),
                     start_time: 0,
                     is_started: false,
+                    priority: 16,
+                    stride: 0,
                 })
             },
         };
@@ -232,6 +240,8 @@ impl TaskControlBlock {
                     syscall_count: BTreeMap::new(),
                     start_time: 0,
                     is_started: false,
+                    priority: parent_inner.priority,
+                    stride: parent_inner.stride,
                 })
             },
         });
