@@ -46,6 +46,14 @@ impl OSInode {
         }
         v
     }
+    /// Get Inode id
+    pub fn get_inode_id(&self) -> u32 {
+        self.inner.exclusive_access().inode.get_inode_id()
+    }
+    /// Get whether is dir
+    pub fn get_inode_is_dir(&self) -> bool {
+        self.inner.exclusive_access().inode.get_inode_is_dir()
+    }
 }
 
 lazy_static! {
@@ -53,6 +61,37 @@ lazy_static! {
         let efs = EasyFileSystem::open(BLOCK_DEVICE.clone());
         Arc::new(EasyFileSystem::root_inode(&efs))
     };
+}
+
+/// Create hard link in root dir
+pub fn create_link(old_name: &str, new_name: &str) -> isize {
+    // let current_files = ROOT_INODE.ls();
+    // println!("Before linking: {}", cu)
+    if let Some(inode) = ROOT_INODE.insert_link_entry(old_name, new_name) {
+        println!("create link at inode {}", inode.get_inode_id());
+        0
+    } else {
+        println!("create_link returns -1, {} not exist", old_name);
+        -1
+    }
+}
+
+/// Remove hard link in root dir
+pub fn delete_link(name: &str) -> isize {
+    let ret = ROOT_INODE.remove_link_entry(name);
+    if ret == 0 {
+        println!("delete link at {} succeeded", name);
+    } else {
+        println!("delete link at {} failed, return {}", name, ret);
+    }
+    ret
+}
+
+/// Get number of hard link in root
+pub fn get_link_count(inode_id: u32) -> u32 {
+    let count = ROOT_INODE.get_link_count_from_root(inode_id);
+    println!("inode_id {} link {} count", inode_id, count);
+    count
 }
 
 /// List all apps in the root directory
@@ -155,5 +194,8 @@ impl File for OSInode {
             total_write_size += write_size;
         }
         total_write_size
+    }
+    fn as_any(&self) -> &dyn _core::any::Any {
+        self
     }
 }
