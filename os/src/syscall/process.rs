@@ -4,7 +4,6 @@ use alloc::sync::Arc;
 
 use crate::{
     config::{MAX_SYSCALL_NUM, PAGE_SIZE},
-    loader::get_app_data_by_name,
     fs::{open_file, OpenFlags},
     mm::{translated_refmut, translated_str, translated_byte_buffer, VirtAddr, MapPermission},
     task::{
@@ -299,8 +298,8 @@ pub fn sys_spawn(_path: *const u8) -> isize {
     // Copy name from user memory
     let path = translated_str(token, _path);
     println!("[debug] sys_spawn: {}", path);
-    if let Some(data) = get_app_data_by_name(path.as_str()) {
-        let new_block_ptr = Arc::new(TaskControlBlock::new(data));
+    if let Some(osinode) = open_file(path.as_str(), OpenFlags::RDONLY) {
+        let new_block_ptr = Arc::new(TaskControlBlock::new(&osinode.read_all()));
         new_block_ptr.inner_exclusive_access().parent = Some(Arc::downgrade(&current_task().unwrap()));
         let pid: isize = new_block_ptr.pid.0 as isize;
         current_task().unwrap().inner_exclusive_access().children.push(new_block_ptr.clone());

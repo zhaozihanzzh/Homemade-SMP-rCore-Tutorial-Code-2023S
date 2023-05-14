@@ -1,6 +1,9 @@
+use crate::block_cache::BlockCache;
+
 use super::{get_block_cache, BlockDevice, BLOCK_SZ};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use spin::MutexGuard;
 use core::fmt::{Debug, Formatter, Result};
 
 /// Magic number for sanity check
@@ -234,7 +237,98 @@ impl DiskInode {
                 }
             });
     }
+    /// Decrease the size of current disk inode
+    pub fn decrease_size(
+        &mut self,
+        new_size: u32,
+        block_device: &Arc<dyn BlockDevice>,
+    ) -> Vec<u32> {
+        let mut current_blocks = self.data_blocks(); // more than one
+        // let recycle_blocks_num = Self::total_blocks(self.size) - Self::total_blocks(new_size);
+        
+        self.size = new_size;
+        let target_blocks = self.data_blocks();
+        let mut recycled_blocks: Vec<u32> = Vec::new();
+        // recycle indirect2 from (a0, b0) -> (a1, b1)
+        if current_blocks > target_blocks.max(INODE_DIRECT_COUNT as u32 + INODE_INDIRECT1_COUNT as u32) {
+            let a1 = (current_blocks as usize - (INODE_DIRECT_COUNT + INODE_INDIRECT1_COUNT)) / INODE_INDIRECT1_COUNT;
+            let b1 = (current_blocks as usize - (INODE_DIRECT_COUNT + INODE_INDIRECT1_COUNT)) % INODE_INDIRECT1_COUNT;
+            let mut a0 = 0;
+            let mut b0 = 0;
+            if target_blocks >= (INODE_DIRECT_COUNT as u32 + INODE_INDIRECT1_COUNT as u32) {
+                a0 = (target_blocks as usize - (INODE_DIRECT_COUNT + INODE_INDIRECT1_COUNT)) / INODE_INDIRECT1_COUNT;
+                b0 = (target_blocks as usize - (INODE_DIRECT_COUNT + INODE_INDIRECT1_COUNT)) % INODE_INDIRECT1_COUNT;
+            }// else {
+            //    a0 = 0;
+            //    b0 = 0;
+            //}
 
+            get_block_cache(self.indirect2 as usize, Arc::clone(block_device))
+            .lock()
+            .modify(0, |indirect2: &mut IndirectBlock| {
+                while (a0 < a1) || (a0 == a1 && b0 < b1) {
+                    if b0 == 0 {
+                        recycled_blocks.push(indirect2[a0]);
+                        indirect2[a0] = 0;
+                    }
+                    // fill current
+                    get_block_cache(indirect2[a0] as usize, Arc::clone(block_device))
+                        .lock()
+                        .modify(0, |indirect1: &mut IndirectBlock| {
+                            recycled_blocks.push(indirect1[b0]);
+                            indirect1[b0] = 0;
+                            current_blocks -= 1;
+                        });
+                    // move to next
+                    b0 += 1;
+                    if b0 == INODE_INDIRECT1_COUNT {
+                        b0 = 0;
+                        a0 += 1;
+                    }
+                }
+            });
+        }
+        // recycle indirect2
+        if target_blocks < (INODE_DIRECT_COUNT + INODE_INDIRECT1_COUNT) as u32 {
+            if current_blocks == (INODE_DIRECT_COUNT + INODE_INDIRECT1_COUNT) as u32 {
+                recycled_blocks.push(self.indirect2);
+                self.indirect2 = 0;
+            }
+            //current_blocks = (INODE_DIRECT_COUNT + INODE_INDIRECT1_COUNT) as u32;
+            // current_blocks -= INODE_INDIRECT1_COUNT as u32;
+            // total_blocks -= INODE_INDIRECT1_COUNT as u32;
+        } else {
+            return recycled_blocks;
+        }
+        // recycle indirect1
+        get_block_cache(self.indirect1 as usize, Arc::clone(block_device))
+            .lock()
+            .modify(0, |indirect1: &mut IndirectBlock| {
+                while current_blocks > target_blocks.max(INODE_DIRECT_COUNT as u32) {
+                    current_blocks -= 1;
+                    recycled_blocks.push(indirect1[current_blocks as usize]);
+                    indirect1[current_blocks as usize] = 0;
+                }
+        });
+        // recycle indirect1
+        if target_blocks < INODE_DIRECT_COUNT as u32 {
+            if current_blocks == INODE_DIRECT_COUNT as u32 {
+                recycled_blocks.push(self.indirect1);
+                self.indirect1 = 0;
+            }
+        } else {
+            return recycled_blocks;
+        }
+        // recycle direct
+        while current_blocks > target_blocks {
+            current_blocks -= 1;
+            recycled_blocks.push(self.direct[current_blocks as usize]);
+            self.direct[current_blocks as usize] = 0;
+        }
+        return recycled_blocks;
+
+
+    }
     /// Clear size to zero and return blocks that should be deallocated.
     /// We will clear the block contents to zero later.
     pub fn clear_size(&mut self, block_device: &Arc<dyn BlockDevice>) -> Vec<u32> {
