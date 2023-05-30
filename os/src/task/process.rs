@@ -55,10 +55,14 @@ pub struct ProcessControlBlockInner {
     pub mutex_available: Vec<usize>,
     /// need vector for mutex
     pub mutex_need: Vec<Vec<usize>>,
+    /// allocated vector for mutex
+    pub mutex_allocated: Vec<Vec<usize>>,
     /// available vector for semaphore
     pub semaphore_available: Vec<usize>,
     /// need vector for semaphore
     pub semaphore_need: Vec<Vec<usize>>,
+    /// allocated vector for semaphore
+    pub semaphore_allocated: Vec<Vec<usize>>,
 }
 
 impl ProcessControlBlockInner {
@@ -132,8 +136,10 @@ impl ProcessControlBlock {
                     is_detect_deadlock_enable: false,
                     mutex_available: Vec::new(),
                     mutex_need: Vec::new(),
+                    mutex_allocated: Vec::new(),
                     semaphore_available: Vec::new(),
                     semaphore_need: Vec::new(),
+                    semaphore_allocated: Vec::new(),
                 })
             },
         });
@@ -160,7 +166,9 @@ impl ProcessControlBlock {
         let mut process_inner = process.inner_exclusive_access();
         process_inner.tasks.push(Some(Arc::clone(&task)));
         process_inner.mutex_need.push(Vec::new());
+        process_inner.mutex_allocated.push(Vec::new());
         process_inner.semaphore_need.push(Vec::new());
+        process_inner.semaphore_allocated.push(Vec::new());
         drop(process_inner);
         insert_into_pid2process(process.getpid(), Arc::clone(&process));
         // add main thread to scheduler
@@ -265,8 +273,10 @@ impl ProcessControlBlock {
                     is_detect_deadlock_enable: false,
                     mutex_available: Vec::new(),
                     mutex_need: Vec::new(),
+                    mutex_allocated: Vec::new(),
                     semaphore_available: Vec::new(),
                     semaphore_need: Vec::new(),
+                    semaphore_allocated: Vec::new(),
                 })
             },
         });
@@ -290,7 +300,9 @@ impl ProcessControlBlock {
         let mut child_inner = child.inner_exclusive_access();
         child_inner.tasks.push(Some(Arc::clone(&task)));
         child_inner.mutex_need.push(Vec::new());
+        child_inner.mutex_allocated.push(Vec::new());
         child_inner.semaphore_need.push(Vec::new());
+        child_inner.semaphore_allocated.push(Vec::new());
         drop(child_inner);
         // modify kstack_top in trap_cx of this thread
         let task_inner = task.inner_exclusive_access();

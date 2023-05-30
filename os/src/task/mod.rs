@@ -90,8 +90,14 @@ pub fn exit_current_and_run_next(exit_code: i32) {
     for need in process.inner_exclusive_access().mutex_need[tid].iter_mut() {
         *need = 0;
     }
+    for allocated in process.inner_exclusive_access().mutex_allocated[tid].iter_mut() {
+        *allocated = 0;
+    }
     for need in process.inner_exclusive_access().semaphore_need[tid].iter_mut() {
         *need = 0;
+    }
+    for allocated in process.inner_exclusive_access().semaphore_allocated[tid].iter_mut() {
+        *allocated = 0;
     }
     // here we do not remove the thread since we are still using the kstack
     // it will be deallocated when sys_waittid is called
