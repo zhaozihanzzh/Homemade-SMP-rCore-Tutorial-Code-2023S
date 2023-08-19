@@ -1,3 +1,4 @@
+INCLUDE link-dwarf.ld
 OUTPUT_ARCH(riscv)
 ENTRY(_start)
 BASE_ADDRESS = 0x80200000;
@@ -19,6 +20,9 @@ SECTIONS
 
     . = ALIGN(4K);
     etext = .;
+    INCLUDE link-rvbt.ld
+    . = _rvbt_str_offsets_end;
+    . = ALIGN(4K);
     srodata = .;
     .rodata : {
         *(.rodata .rodata.*)

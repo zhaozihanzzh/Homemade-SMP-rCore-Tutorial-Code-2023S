@@ -22,6 +22,7 @@ use crate::task::{
 };
 use crate::timer::{check_timer, set_next_trigger};
 use core::arch::{asm, global_asm};
+use riscv::register::sstatus::{self, Sstatus};
 use riscv::register::{
     mtvec::TrapMode,
     scause::{self, Exception, Interrupt, Trap},
@@ -37,10 +38,10 @@ pub fn init() {
 /// set trap entry for traps happen in kernel(supervisor) mode
 fn set_kernel_trap_entry() {
     extern "C" {
-        fn __trap_from_kernel();
+        fn __s_alltraps();
     }
     unsafe {
-        stvec::write(__trap_from_kernel as usize, TrapMode::Direct);
+        stvec::write(__s_alltraps as usize, TrapMode::Direct);
     }
 }
 /// set trap entry for traps happen in user mode
@@ -60,6 +61,9 @@ pub fn enable_timer_interrupt() {
 /// trap handler
 #[no_mangle]
 pub fn trap_handler() -> ! {
+    if Sstatus::spp(&sstatus::read()) != sstatus::SPP::User {
+        panic!("[DEBUG] Error: trap_handler: Sstatus::spp(&sstatus::read()) != sstatus::SPP::User");
+    }
     set_kernel_trap_entry();
     let scause = scause::read();
     let stval = stval::read();
@@ -97,6 +101,12 @@ pub fn trap_handler() -> ! {
             check_timer();
             suspend_current_and_run_next();
         }
+        /*Trap::Interrupt(Interrupt::SupervisorSoft) => {
+            let mut fp: usize;
+            unsafe { asm!("mv {}, a0", out(reg) fp); }
+            println!("S:a0={}", fp);
+            // panic!("ZHAOZIHAN: Soft Interrupt!");
+        }*/
         _ => {
             panic!(
                 "Unsupported trap {:?}, stval = {:#x}!",
@@ -140,10 +150,63 @@ pub fn trap_return() -> ! {
 
 /// handle trap from kernel
 #[no_mangle]
-pub fn trap_from_kernel() -> ! {
+pub fn trap_from_kernel() {
+    // Read reg in inline asm
+    unsafe {
+        let mut fp: usize;
+        asm!("mv {}, a0", out(reg) fp);
+        println!("a0={}", fp);
+        asm!("mv {}, sp", out(reg) fp);
+        println!("From start: sp={:#x}", fp);
+    }
+    if Sstatus::spp(&sstatus::read()) != sstatus::SPP::Supervisor {
+        panic!("[DEBUG] Error: trap_from_kernel: Sstatus::spp(&sstatus::read()) != sstatus::SPP::Supervisor");
+    } else {
+        println!("[DEBUG] trap_from_kernel: Sstatus::spp is Supervisor.");
+    }
     use riscv::register::sepc;
     trace!("stval = {:#x}, sepc = {:#x}", stval::read(), sepc::read());
-    panic!("a trap {:?} from kernel!", scause::read().cause());
+    //panic!("a trap {:?} from kernel!", scause::read().cause());
+    let scause = scause::read();
+    let stval = stval::read();
+    // trace!("into {:?}", scause.cause());
+    match scause.cause() {
+        Trap::Interrupt(Interrupt::SupervisorSoft) => {
+            println!("Z");
+            // panic!("ZHAOZIHAN: Soft Interrupt!");
+        }
+        Trap::Interrupt(Interrupt::SupervisorTimer) => {
+            set_next_trigger();
+            // check_timer();
+        }
+        Trap::Exception(Exception::StoreFault)
+        | Trap::Exception(Exception::StorePageFault)
+        | Trap::Exception(Exception::InstructionFault)
+        | Trap::Exception(Exception::InstructionPageFault)
+        | Trap::Exception(Exception::LoadFault)
+        | Trap::Exception(Exception::LoadPageFault) => {
+            let sepc: usize;
+            unsafe { asm!("ld {}, 33*8(sp)", out(reg) sepc); }
+            panic!(
+                "trap_from_kernel: {:?} in kernel, bad addr = {:#x}, bad instruction = {:#x}.",
+                scause.cause(),
+                stval,
+                sepc,
+            );
+        }
+        _ => {
+            panic!(
+                "trap_from_kernel: Unsupported trap {:?}, stval = {:#x}!",
+                scause.cause(),
+                stval
+            );
+        }
+    }
+    unsafe {
+        let mut fp: usize;
+        asm!("mv {}, sp", out(reg) fp);
+        println!("From end: sp={:#x}", fp);
+    }
 }
 
 pub use context::TrapContext;

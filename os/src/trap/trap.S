@@ -84,3 +84,41 @@ __emergency_end:
 __trap_from_kernel:
     la sp, __emergency_end
     j trap_from_kernel    
+
+    .section .text
+    .globl __s_alltraps
+    .globl __s_restore
+    .align 2
+__s_alltraps:
+    addi sp, sp, -35*8
+    # save other general purpose registers
+    sd x1, 1*8(sp)
+    # skip sp(x2), we will save it later
+    sd x3, 3*8(sp)
+    # skip tp(x4), application does not use it
+    # save x5~x31
+    .set n, 5
+    .rept 27
+        SAVE_GP %n
+        .set n, n+1
+    .endr
+    csrr t0, sstatus
+    csrr t1, sepc
+    sd t0, 32*8(sp)
+    sd t1, 33*8(sp)
+    j trap_from_kernel
+
+__s_restore:
+    ld t0, 32*8(sp)
+    ld t1, 33*8(sp)
+    csrw sstatus, t0
+    csrw sepc, t1
+    ld x1, 1*8(sp)
+    ld x3, 3*8(sp)
+    .set n, 5
+    .rept 27
+        LOAD_GP %n
+        .set n, n+1
+    .endr
+    addi sp, sp, 35*8
+    sret

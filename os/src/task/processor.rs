@@ -12,7 +12,9 @@ use crate::sync::UPSafeCell;
 use crate::timer::get_time_ms;
 use crate::trap::TrapContext;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use lazy_static::*;
+use core::arch::asm;
 
 /// Processor management structure
 pub struct Processor {
@@ -23,6 +25,7 @@ pub struct Processor {
 }
 
 impl Processor {
+    #[allow(unused)]
     pub fn new() -> Self {
         Self {
             current: None,
@@ -47,14 +50,14 @@ impl Processor {
 }
 
 lazy_static! {
-    pub static ref PROCESSOR: UPSafeCell<Processor> = unsafe { UPSafeCell::new(Processor::new()) };
+    pub static ref PROCESSORS: Vec<UPSafeCell<Processor>> = (0..4).map(|_| unsafe { UPSafeCell::new(Processor::new())}).collect();
 }
 
 ///The main part of process execution and scheduling
 ///Loop `fetch_task` to get the process that needs to run, and switch the process through `__switch`
 pub fn run_tasks() {
     loop {
-        let mut processor = PROCESSOR.exclusive_access();
+        let mut processor = PROCESSORS[get_processor_id()].exclusive_access();
         if let Some(task) = fetch_task() {
             let idle_task_cx_ptr = processor.get_idle_task_cx_ptr();
             // access coming task TCB exclusively
@@ -84,12 +87,12 @@ pub fn run_tasks() {
 
 /// Get current task through take, leaving a None in its place
 pub fn take_current_task() -> Option<Arc<TaskControlBlock>> {
-    PROCESSOR.exclusive_access().take_current()
+    PROCESSORS[get_processor_id()].exclusive_access().take_current()
 }
 
 /// Get a copy of the current task
 pub fn current_task() -> Option<Arc<TaskControlBlock>> {
-    PROCESSOR.exclusive_access().current()
+    PROCESSORS[get_processor_id()].exclusive_access().current()
 }
 
 /// get current process
@@ -158,10 +161,17 @@ pub fn write_current_syscall_times_array(syscall_times: &mut [u32; MAX_SYSCALL_N
 
 /// Return to idle control flow for new scheduling
 pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
-    let mut processor = PROCESSOR.exclusive_access();
+    let mut processor = PROCESSORS[get_processor_id()].exclusive_access();
     let idle_task_cx_ptr = processor.get_idle_task_cx_ptr();
     drop(processor);
     unsafe {
         __switch(switched_task_cx_ptr, idle_task_cx_ptr);
     }
+}
+
+/// Get Hart id from tp register
+pub fn get_processor_id() -> usize {
+    let mut processor_id: usize;
+    unsafe { asm!("mv {}, tp", out(reg) processor_id); }
+    processor_id
 }

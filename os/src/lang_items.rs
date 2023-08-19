@@ -1,13 +1,22 @@
 //! The panic handler and backtrace
 
+use lazy_static::lazy_static;
+
 use crate::sbi::shutdown;
+use crate::sync::SMPSafeCell;
 use crate::task::current_kstack_top;
 use core::arch::asm;
 use core::panic::PanicInfo;
 
+lazy_static! {
+    /// Control the concurrency of panic
+    pub static ref PANIC_LOCK: SMPSafeCell<bool> = unsafe { SMPSafeCell::new(false) };
+}
 #[panic_handler]
 /// panic handler
 fn panic(info: &PanicInfo) -> ! {
+    // unsafe { riscv::register::sie::clear_stimer(); }
+    // let guard = PANIC_LOCK.exclusive_access();
     if let Some(location) = info.location() {
         println!(
             "[kernel] Panicked at {}:{} {}",
@@ -18,9 +27,14 @@ fn panic(info: &PanicInfo) -> ! {
     } else {
         println!("[kernel] Panicked: {}", info.message().unwrap());
     }
-    // unsafe {
-    //     backtrace();
-    // }
+    // drop(guard);
+    rvbt::frame::trace(&mut |frame| {
+        rvbt::symbol::resolve_frame(frame, &|symbol| println!("{}", symbol));
+        true
+    });
+    unsafe {
+        backtrace();
+    }
     shutdown()
 }
 /// backtrace function

@@ -17,6 +17,8 @@ extern "C" {
     fn stext();
     fn etext();
     fn srodata();
+    fn _rvbt_addr_start();
+    fn _rvbt_str_offsets_end();
     fn erodata();
     fn sdata();
     fn edata();
@@ -133,6 +135,7 @@ impl MemorySet {
         memory_set.map_trampoline();
         // map kernel sections
         info!(".text [{:#x}, {:#x})", stext as usize, etext as usize);
+        info!(".rvbt_ [{:#x}, {:#x})", _rvbt_addr_start as usize, _rvbt_str_offsets_end as usize);
         info!(".rodata [{:#x}, {:#x})", srodata as usize, erodata as usize);
         info!(".data [{:#x}, {:#x})", sdata as usize, edata as usize);
         info!(
@@ -154,6 +157,16 @@ impl MemorySet {
             MapArea::new(
                 (srodata as usize).into(),
                 (erodata as usize).into(),
+                MapType::Identical,
+                MapPermission::R,
+            ),
+            None,
+        );
+        info!("mapping .rvbt_ section");
+        memory_set.push(
+            MapArea::new(
+                (_rvbt_addr_start as usize).into(),
+                (_rvbt_str_offsets_end as usize).into(),
                 MapType::Identical,
                 MapPermission::R,
             ),

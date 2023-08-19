@@ -38,6 +38,7 @@ mod board;
 
 #[macro_use]
 mod console;
+mod device_tree;
 pub mod config;
 pub mod drivers;
 pub mod fs;
@@ -53,6 +54,10 @@ pub mod trap;
 
 use core::arch::global_asm;
 
+use riscv::register::sstatus::{Sstatus, self};
+use rvbt::{frame::trace, symbol::resolve_frame, init::debug_init};
+use crate::mm::KERNEL_SPACE;
+
 global_asm!(include_str!("entry.asm"));
 
 fn clear_bss() {
@@ -66,19 +71,57 @@ fn clear_bss() {
     }
 }
 
+extern "C" {
+    fn _start_backup_hart();
+}
+
 #[no_mangle]
 /// the rust entry-point of os
-pub fn rust_main() -> ! {
+pub fn rust_main(hart_id: usize, dtb: usize) -> ! {
     clear_bss();
     println!("[kernel] Hello, world!");
+    println!("Boot from CPU {}", hart_id);
+    let board_info = device_tree::parse(dtb);
+    println!("SMP total {} harts", board_info.smp);
     logging::init();
     mm::init();
     mm::remap_test();
+    debug_init();
+    trace(&mut |frame| {
+        resolve_frame(frame, &|symbol| println!("{}", symbol));
+        true
+    });
+    
+    for i in 0..board_info.smp {
+        if i != hart_id {
+            println!("hart_start {}", sbi::hart_start(i, _start_backup_hart as usize, i));
+        }
+    }
+    // unsafe { sstatus::set_spp(SPP::Supervisor); }
     trap::init();
+    // trap::enable_ipi();
     trap::enable_timer_interrupt();
     timer::set_next_trigger();
+    println!("SIE status: {}", Sstatus::sie(&sstatus::read()));
+    println!("SPP status: {}", Sstatus::spp(&sstatus::read()) as usize);
+    
     fs::list_apps();
     task::add_initproc();
     task::run_tasks();
     panic!("Unreachable in rust_main!");
+}
+
+#[no_mangle]
+fn start_backup_hart(hart_id: usize, hart_id2: usize) -> ! {
+    println!("Boot from backup CPU {} {}", hart_id, hart_id2);
+    KERNEL_SPACE.exclusive_access().activate();
+    // debug_init();
+    trap::init();
+    trap::enable_timer_interrupt();
+    timer::set_next_trigger();
+    task::add_initproc();
+    task::run_tasks();
+    loop {
+        unsafe { core::arch::asm!("nop"); }
+    }
 }

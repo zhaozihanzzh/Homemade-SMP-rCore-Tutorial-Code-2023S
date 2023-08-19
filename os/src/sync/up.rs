@@ -30,6 +30,13 @@ impl<T> UPSafeCell<T> {
     }
     /// Panic if the data has been borrowed.
     pub fn exclusive_access(&self) -> RefMut<'_, T> {
-        self.inner.borrow_mut()
+        let result = self.inner.try_borrow_mut();
+        if result.is_err() {
+            rvbt::frame::trace(&mut |frame| {
+                rvbt::symbol::resolve_frame(frame, &|symbol| println!("{}", symbol));
+                true
+            });
+        }
+        result.unwrap()
     }
 }

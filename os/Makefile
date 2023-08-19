@@ -11,7 +11,7 @@ APPS := ../user/src/bin/*
 BOARD := qemu
 SBI ?= rustsbi
 BOOTLOADER := ../bootloader/$(SBI)-$(BOARD).bin
-
+SMP_CORES := 4
 # Building mode argument
 ifeq ($(MODE), release)
 	MODE_ARG := --release
@@ -43,6 +43,11 @@ env:
 	rustup component add llvm-tools-preview
 
 $(KERNEL_BIN): kernel
+	for sec in 'abbrev' 'addr' 'aranges' 'info' 'line' 'line_str' 'ranges' 'rnglists' 'str' 'str_offsets'; do \
+    	rust-objcopy $(KERNEL_ELF) --dump-section .debug_$$sec=tmp_$$sec; \
+    	riscv64-unknown-elf-objcopy $(KERNEL_ELF) --update-section .rvbt_$$sec=tmp_$$sec; \
+	done
+	rm tmp*;
 	@$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $@
 
 fs-img: $(APPS)
@@ -70,6 +75,7 @@ run: build run-inner
 run-inner:
 	@qemu-system-riscv64 \
 		-M 128m \
+		-smp cores=$(SMP_CORES) \
 		-machine virt \
 		-nographic \
 		-bios $(BOOTLOADER) \
@@ -79,7 +85,7 @@ run-inner:
 
 debug: build
 	@tmux new-session -d \
-		"qemu-system-riscv64 -machine virt -nographic -bios $(BOOTLOADER) -device loader,file=$(KERNEL_BIN),addr=$(KERNEL_ENTRY_PA) -s -S" && \
+		"qemu-system-riscv64 -machine virt -nographic -bios $(BOOTLOADER) -device loader,file=$(KERNEL_BIN),addr=$(KERNEL_ENTRY_PA) -smp cores=$(SMP_CORES) -s -S" && \
 		tmux split-window -h "riscv64-unknown-elf-gdb -ex 'file $(KERNEL_ELF)' -ex 'set arch riscv:rv64' -ex 'target remote localhost:1234'" && \
 		tmux -2 attach-session -d
 
