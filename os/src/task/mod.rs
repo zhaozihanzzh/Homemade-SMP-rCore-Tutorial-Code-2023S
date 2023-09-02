@@ -30,11 +30,13 @@ use process::ProcessControlBlock;
 use switch::__switch;
 
 pub use context::TaskContext;
-pub use id::{kstack_alloc, pid_alloc, KernelStack, PidHandle, IDLE_PID};
+pub use id::{
+    kstack_alloc, pid_alloc, KernelStack, PidHandle, IDLE_PID,init_allocators
+};
 pub use manager::{add_task, pid2process, remove_from_pid2process, remove_task, wakeup_task};
 pub use processor::{
     current_kstack_top, current_process, current_task, current_trap_cx, current_trap_cx_user_va,
-    current_user_token, run_tasks, schedule, take_current_task, get_processor_id,
+    current_user_token, run_tasks, schedule, take_current_task, init_processors, get_processor_id,
     get_current_start_running_time, record_current_syscall, write_current_syscall_times_array,
 };
 pub use signal::SignalFlags;
@@ -197,6 +199,13 @@ lazy_static! {
 ///Add init process to the manager
 pub fn add_initproc() {
     let _initproc = INITPROC.clone();
+}
+
+///Add idle process to the manager
+pub fn add_idleproc() {
+    let inode = open_file("ch8b_smp_idle", OpenFlags::RDONLY).unwrap();
+    let v = inode.read_all();
+    ProcessControlBlock::new(v.as_slice());
 }
 
 /// Check if the current task has any signal to handle

@@ -6,6 +6,8 @@
 
 use core::cell::{RefCell, RefMut};
 
+use crate::lang_items::backtrace;
+
 /// Wrap a static data structure inside it so that we are
 /// able to access it without any `unsafe`.
 ///
@@ -32,11 +34,11 @@ impl<T> UPSafeCell<T> {
     pub fn exclusive_access(&self) -> RefMut<'_, T> {
         let result = self.inner.try_borrow_mut();
         if result.is_err() {
-            rvbt::frame::trace(&mut |frame| {
-                rvbt::symbol::resolve_frame(frame, &|symbol| println!("{}", symbol));
-                true
-            });
+            let unwrap = result.unwrap();
+            backtrace();
+            unwrap
+        } else {
+            result.unwrap()
         }
-        result.unwrap()
     }
 }

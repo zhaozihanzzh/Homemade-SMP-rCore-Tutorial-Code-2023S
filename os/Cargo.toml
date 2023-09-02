@@ -17,6 +17,12 @@ virtio-drivers = { git = "https://github.com/rcore-os/virtio-drivers", rev = "4e
 easy-fs = { path = "../easy-fs" }
 dtb-walker = "=0.2.0-alpha.3"
 rvbt = { git = "https://github.com/zhaozihanzzh/rvbt", branch = "main" }
+# trace_lib = {git = "https://github.com/os-module/rtrace"}
+bit_field = "0.10.1"
+addr2line = { path = "../addr2line-0.21.0", version = "0.21.0", default-features = false, features = ["rustc-demangle"] }
+gimli = { version = "0.28.0", default-features = false, features = ["read"]}
+rustc-demangle = "0.1"
+
 
 [profile.release]
 debug = true

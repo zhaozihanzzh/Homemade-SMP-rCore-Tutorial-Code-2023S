@@ -5,9 +5,8 @@ use super::{PTEFlags, PageTable, PageTableEntry};
 use super::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 use super::{StepByOne, VPNRange};
 use crate::config::{MEMORY_END, MMIO, PAGE_SIZE, TRAMPOLINE};
-use crate::sync::UPSafeCell;
+use crate::sync::SMPSafeCell;
 use alloc::collections::BTreeMap;
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::arch::asm;
 use lazy_static::*;
@@ -30,13 +29,13 @@ extern "C" {
 
 lazy_static! {
     /// The kernel's initial memory mapping(kernel address space)
-    pub static ref KERNEL_SPACE: Arc<UPSafeCell<MemorySet>> =
-        Arc::new(unsafe { UPSafeCell::new(MemorySet::new_kernel()) });
+    pub static ref KERNEL_SPACE: SMPSafeCell<MemorySet> =
+        unsafe { SMPSafeCell::new(MemorySet::new_kernel()) };
 }
 
 /// the kernel token
 pub fn kernel_token() -> usize {
-    KERNEL_SPACE.exclusive_access().token()
+    KERNEL_SPACE.exclusive_access().get().token()
 }
 
 /// address space
@@ -460,16 +459,19 @@ pub fn remap_test() {
     let mid_rodata: VirtAddr = ((srodata as usize + erodata as usize) / 2).into();
     let mid_data: VirtAddr = ((sdata as usize + edata as usize) / 2).into();
     assert!(!kernel_space
+        .get()
         .page_table
         .translate(mid_text.floor())
         .unwrap()
         .writable(),);
     assert!(!kernel_space
+        .get()
         .page_table
         .translate(mid_rodata.floor())
         .unwrap()
         .writable(),);
     assert!(!kernel_space
+        .get()
         .page_table
         .translate(mid_data.floor())
         .unwrap()

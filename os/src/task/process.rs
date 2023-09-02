@@ -8,6 +8,7 @@ use super::{pid_alloc, PidHandle};
 use crate::fs::{File, Stdin, Stdout};
 use crate::mm::{translated_refmut, MemorySet, KERNEL_SPACE};
 use crate::sync::{Condvar, Mutex, Semaphore, UPSafeCell};
+use crate::task::manager::add_task_at_this_hart;
 use crate::trap::{trap_handler, TrapContext};
 use alloc::string::String;
 use alloc::sync::{Arc, Weak};
@@ -158,7 +159,7 @@ impl ProcessControlBlock {
         *trap_cx = TrapContext::app_init_context(
             entry_point,
             ustack_top,
-            KERNEL_SPACE.exclusive_access().token(),
+            KERNEL_SPACE.exclusive_access().get().token(),
             kstack_top,
             trap_handler as usize,
         );
@@ -172,7 +173,7 @@ impl ProcessControlBlock {
         drop(process_inner);
         insert_into_pid2process(process.getpid(), Arc::clone(&process));
         // add main thread to scheduler
-        add_task(task);
+        add_task_at_this_hart(task);
         process
     }
 
@@ -226,7 +227,7 @@ impl ProcessControlBlock {
         let mut trap_cx = TrapContext::app_init_context(
             entry_point,
             user_sp,
-            KERNEL_SPACE.exclusive_access().token(),
+            KERNEL_SPACE.exclusive_access().get().token(),
             task.kstack.get_top(),
             trap_handler as usize,
         );

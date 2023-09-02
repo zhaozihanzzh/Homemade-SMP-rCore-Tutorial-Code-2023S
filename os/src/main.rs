@@ -39,6 +39,8 @@ mod board;
 #[macro_use]
 mod console;
 mod device_tree;
+mod trace;
+
 pub mod config;
 pub mod drivers;
 pub mod fs;
@@ -51,12 +53,14 @@ pub mod syscall;
 pub mod task;
 pub mod timer;
 pub mod trap;
+mod once_cell;
+mod rtrace;
 
 use core::arch::global_asm;
 
 use riscv::register::sstatus::{Sstatus, self};
-use rvbt::{frame::trace, symbol::resolve_frame, init::debug_init};
-use crate::mm::KERNEL_SPACE;
+use rvbt::init::debug_init;
+use crate::{mm::KERNEL_SPACE, task::{init_processors, init_allocators}, console::init_locked_print, lang_items::init_panic_lock};
 
 global_asm!(include_str!("entry.asm"));
 
@@ -79,24 +83,19 @@ extern "C" {
 /// the rust entry-point of os
 pub fn rust_main(hart_id: usize, dtb: usize) -> ! {
     clear_bss();
-    println!("[kernel] Hello, world!");
-    println!("Boot from CPU {}", hart_id);
     let board_info = device_tree::parse(dtb);
-    println!("SMP total {} harts", board_info.smp);
     logging::init();
     mm::init();
+    init_locked_print();
     mm::remap_test();
+    println!("[kernel] Hello, world!");
+    println!("Boot from CPU {}", hart_id);
+    println!("SMP total {} harts", board_info.smp);
     debug_init();
-    trace(&mut |frame| {
-        resolve_frame(frame, &|symbol| println!("{}", symbol));
-        true
-    });
-    
-    for i in 0..board_info.smp {
-        if i != hart_id {
-            println!("hart_start {}", sbi::hart_start(i, _start_backup_hart as usize, i));
-        }
-    }
+    init_panic_lock();
+    init_allocators();
+    init_processors(board_info.smp);
+
     // unsafe { sstatus::set_spp(SPP::Supervisor); }
     trap::init();
     // trap::enable_ipi();
@@ -107,6 +106,11 @@ pub fn rust_main(hart_id: usize, dtb: usize) -> ! {
     
     fs::list_apps();
     task::add_initproc();
+    for i in 0..board_info.smp {
+        if i != hart_id {
+            println!("hart_start {}", sbi::hart_start(i, _start_backup_hart as usize, i));
+        }
+    }
     task::run_tasks();
     panic!("Unreachable in rust_main!");
 }
@@ -114,12 +118,12 @@ pub fn rust_main(hart_id: usize, dtb: usize) -> ! {
 #[no_mangle]
 fn start_backup_hart(hart_id: usize, hart_id2: usize) -> ! {
     println!("Boot from backup CPU {} {}", hart_id, hart_id2);
-    KERNEL_SPACE.exclusive_access().activate();
+    KERNEL_SPACE.exclusive_access().get().activate();
     // debug_init();
     trap::init();
     trap::enable_timer_interrupt();
     timer::set_next_trigger();
-    task::add_initproc();
+    task::add_idleproc();
     task::run_tasks();
     loop {
         unsafe { core::arch::asm!("nop"); }

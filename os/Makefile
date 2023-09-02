@@ -41,13 +41,17 @@ env:
 	cargo install cargo-binutils
 	rustup component add rust-src
 	rustup component add llvm-tools-preview
+	@# install trace_exe to generate elf symbol info
+	# @cargo install --git  https://github.com/os-module/elfinfo
 
 $(KERNEL_BIN): kernel
 	for sec in 'abbrev' 'addr' 'aranges' 'info' 'line' 'line_str' 'ranges' 'rnglists' 'str' 'str_offsets'; do \
     	rust-objcopy $(KERNEL_ELF) --dump-section .debug_$$sec=tmp_$$sec; \
     	riscv64-unknown-elf-objcopy $(KERNEL_ELF) --update-section .rvbt_$$sec=tmp_$$sec; \
 	done
-	rm tmp*;
+	for sec in 'abbrev' 'addr' 'aranges' 'info' 'line' 'line_str' 'ranges' 'rnglists' 'str' 'str_offsets'; do \
+		rm tmp_$$sec; \
+	done
 	@$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $@
 
 fs-img: $(APPS)
@@ -57,6 +61,9 @@ fs-img: $(APPS)
 
 kernel:
 	@echo Platform: $(BOARD)
+	@touch src/trace/kernel_symbol.S && rm src/trace/kernel_symbol.S
+	@cargo build --release
+	@(nm -n ${KERNEL_ELF} | trace_exe > src/trace/kernel_symbol.S)
 	@cargo build --release
 
 clean:

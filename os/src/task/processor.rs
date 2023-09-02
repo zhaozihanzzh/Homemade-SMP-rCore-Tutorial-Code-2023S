@@ -5,15 +5,18 @@
 //! and the replacement and transfer of control flow of different applications are executed.
 
 use super::__switch;
+use super::manager::{TASK_MANAGER, TaskManager, PID2PCB};
 use super::{fetch_task, TaskStatus};
 use super::{TaskContext, TaskControlBlock, ProcessControlBlock};
 use crate::config::MAX_SYSCALL_NUM;
-use crate::sync::UPSafeCell;
+use crate::sync::{UPSafeCell, SMPSafeCell};
 use crate::timer::get_time_ms;
 use crate::trap::TrapContext;
+use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use lazy_static::*;
+use crate::once_cell::race::OnceBox;
 use core::arch::asm;
 
 /// Processor management structure
@@ -49,22 +52,36 @@ impl Processor {
     }
 }
 
-lazy_static! {
-    pub static ref PROCESSORS: Vec<UPSafeCell<Processor>> = (0..4).map(|_| unsafe { UPSafeCell::new(Processor::new())}).collect();
+pub static PROCESSORS: OnceBox<Vec<UPSafeCell<Processor>>> = OnceBox::new();
+
+/// Initialize processors vector
+pub fn init_processors(hart_num: usize) {
+    let processors = Box::new((0..hart_num).map(|_| unsafe { UPSafeCell::new(Processor::new())}).collect());
+    if PROCESSORS.set(processors).is_err() {
+        println!("Can't init processors");
+    }
+    let task_manager = Box::new((0..hart_num).map(|_| unsafe { SMPSafeCell::new(TaskManager::new()) }).collect());
+    if TASK_MANAGER.set(task_manager).is_err() {
+        println!("Can't init task_manager");
+    }
+    let pid2pcb = Box::new(unsafe { SMPSafeCell::new(BTreeMap::new()) });
+    if PID2PCB.set(pid2pcb).is_err() {
+        println!("Can't init pid2pcb");
+    }
 }
 
 ///The main part of process execution and scheduling
 ///Loop `fetch_task` to get the process that needs to run, and switch the process through `__switch`
 pub fn run_tasks() {
     loop {
-        let mut processor = PROCESSORS[get_processor_id()].exclusive_access();
+        let mut processor = PROCESSORS.get().unwrap()[get_processor_id()].exclusive_access();
         if let Some(task) = fetch_task() {
             let idle_task_cx_ptr = processor.get_idle_task_cx_ptr();
             // access coming task TCB exclusively
             let mut task_inner = task.inner_exclusive_access();
             if !task_inner.is_started {
                 task_inner.start_time = get_time_ms();
-                println!("Start_time in run_next_task={}", task_inner.start_time);
+                // println!("Start_time in run_next_task={}", task_inner.start_time);
                 task_inner.is_started = true;
             }
             task_inner.stride += 32768 / task_inner.priority;
@@ -87,12 +104,12 @@ pub fn run_tasks() {
 
 /// Get current task through take, leaving a None in its place
 pub fn take_current_task() -> Option<Arc<TaskControlBlock>> {
-    PROCESSORS[get_processor_id()].exclusive_access().take_current()
+    PROCESSORS.get().unwrap()[get_processor_id()].exclusive_access().take_current()
 }
 
 /// Get a copy of the current task
 pub fn current_task() -> Option<Arc<TaskControlBlock>> {
-    PROCESSORS[get_processor_id()].exclusive_access().current()
+    PROCESSORS.get().unwrap()[get_processor_id()].exclusive_access().current()
 }
 
 /// get current process
@@ -161,7 +178,7 @@ pub fn write_current_syscall_times_array(syscall_times: &mut [u32; MAX_SYSCALL_N
 
 /// Return to idle control flow for new scheduling
 pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
-    let mut processor = PROCESSORS[get_processor_id()].exclusive_access();
+    let mut processor = PROCESSORS.get().unwrap()[get_processor_id()].exclusive_access();
     let idle_task_cx_ptr = processor.get_idle_task_cx_ptr();
     drop(processor);
     unsafe {
